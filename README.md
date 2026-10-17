@@ -8,12 +8,24 @@
 
 An AI-powered **automatic code review tool for Gitea/Forgejo PRs**, built on the [OpenCode](https://opencode.ai) plugin system. It listens for PR and comment events via Gitea Actions, automatically fetches code diffs, and submits structured reviews.
 
+## About This Fork
+
+This fork of [ccsert/opencode-review-gitea](https://github.com/ccsert/opencode-review-gitea) hardens the reviewer for unattended use, where an author model pushes fixes in response to reviews:
+
+- **Pinned dependencies.** OpenCode, Bun, the container images, and the actions are pinned to exact versions, digests, or commit SHAs, and tool dependencies install from the lockfile only.
+- **Configuration the pull request cannot change.** The review configuration comes from the image or the base branch, never from the pull request, and OpenCode runs outside the checkout so that a pull request's own `opencode.json` or `.opencode/` is not loaded.
+- **Fixed target.** The tools take the repository and pull request from the Gitea Actions event payload, not from the model, so workflows do not pass them in. `REPO_OWNER`, `REPO_NAME`, and `PR_NUMBER` name the pull request only when running the review by hand.
+- **Reviews pinned to the reviewed commit.** The diff and the review share one snapshot, so a push during a review cannot move its comments onto the wrong lines.
+- **Comments only on changed lines.** Each comment quotes the code it is about and is checked against the diff before posting. Comments are moved to the line their quote is on, and those that match no changed line are listed in the summary instead.
+- **Correct paths** for files in directories such as `lib/` and `db/`, which the diff parser used to garble.
+- **Exact comment trigger**, and a notice on every review of a pull request that changes CI or review configuration.
+
 ## ✨ Features
 
 - 🤖 **AI-Powered Code Review** - Uses Claude/GPT/DeepSeek models to analyze code changes
 - 📝 **Line-Level Comments** - Provides precise feedback on specific code lines
 - ✅ **Review Decisions** - Supports approve, request_changes, and comment states
-- 🔄 **Auto-Trigger** - Triggered by `/oc` or `/opencode` comments
+- 🔄 **Auto-Trigger** - Reviews new and updated PRs, or on a `/oc` or `/opencode` comment
 - � **Incremental Review** - Only reviews new changes since last review (for updated PRs)
 - 🏷️ **Structured Tags** - Categorizes issues by type (BUG, SECURITY, PERFORMANCE) and severity
 - �🐳 **Docker Support** - Zero-config installation with pre-built image
@@ -21,28 +33,12 @@ An AI-powered **automatic code review tool for Gitea/Forgejo PRs**, built on the
 
 ## 📦 Installation
 
-### Interactive Installation (Recommended)
+Copy one of the workflow templates from a checkout of this repository you have reviewed:
 
-Run in your project root:
+- **Docker:** build the image from this repository's `Dockerfile`, push it to a registry your runner can reach, and copy `templates/workflow-docker.yaml` to `.gitea/workflows/opencode-review.yaml`, filling in the image reference and its digest.
+- **Source:** copy `.opencode-review/` and `templates/workflow-source.yaml` (as `.gitea/workflows/opencode-review.yaml`) into your repository.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/ccsert/opencode-review-gitea/main/install.sh | bash
-```
-
-You'll see an interactive menu to choose your installation method.
-
-### Direct Installation Options
-
-```bash
-# Docker-based (Recommended) - Zero files added to repo
-curl -fsSL https://raw.githubusercontent.com/ccsert/opencode-review-gitea/main/install.sh | bash -s -- --docker
-
-# Source-based - Full customization
-curl -fsSL https://raw.githubusercontent.com/ccsert/opencode-review-gitea/main/install.sh | bash -s -- --source
-
-# Both methods
-curl -fsSL https://raw.githubusercontent.com/ccsert/opencode-review-gitea/main/install.sh | bash -s -- --both
-```
+`install.sh` is still present, but it downloads upstream's `main` branch unpinned, so this fork does not recommend it.
 
 ## 🔄 Installation Methods Comparison
 
@@ -51,7 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/ccsert/opencode-review-gitea/main/i
 | **Files added** | 1 workflow file | .opencode-review/ + workflow |
 | **CI speed** | Fast (cached image) | Slower (install deps each run) |
 | **Customization** | Environment variables | Full control over agents/tools |
-| **Updates** | Automatic with `:latest` | Manual update required |
+| **Updates** | Rebuild the image and update the pinned digest | Copy the updated files |
 | **Best for** | Quick setup, standard use | Custom prompts, advanced users |
 
 ## ⚙️ Configuration
@@ -156,22 +152,26 @@ Comment on a PR:
 or
 
 ```
-/opencode please review this PR
+/opencode
 ```
+
+The comment must be exactly the command, on a pull request. Comments that merely mention it do not start a review.
 
 ### Local Testing (Docker)
 
 ```bash
+docker build -t opencode-review .
 docker run --rm \
-  -v $(pwd):/workspace \
   -e GITEA_TOKEN="your-token" \
   -e GITEA_SERVER_URL="https://your-gitea.example.com" \
   -e DEEPSEEK_API_KEY="your-key" \
   -e PR_NUMBER=123 \
   -e REPO_OWNER="your-org" \
   -e REPO_NAME="your-repo" \
-  ghcr.io/ccsert/opencode-review:latest
+  opencode-review
 ```
+
+The image uses its built-in configuration. To try a modified one, mount it anywhere other than the reviewed checkout and point `OPENCODE_CONFIG_DIR` at it.
 
 `REPO_NAME` can be either `repo` or `owner/repo` (entrypoint will normalize it).
 
@@ -183,9 +183,10 @@ docker run --rm \
 export GITEA_TOKEN="your-token"
 export GITEA_SERVER_URL="https://your-gitea.example.com"
 export OPENCODE_CONFIG_DIR="$(pwd)/.opencode-review"
+export REPO_OWNER="owner" REPO_NAME="repo" PR_NUMBER=123
 
-opencode run --agent code-review \
-  "Please review PR #123 in owner/repo"
+# Run from an empty directory so OpenCode loads no project configuration.
+(cd "$(mktemp -d)" && opencode run --agent code-review "Please review PR #123 in owner/repo")
 ```
 
 ## 🔧 Customization (Source Installation)
