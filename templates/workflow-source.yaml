@@ -29,9 +29,13 @@ jobs:
     container: catthehacker/ubuntu:act-latest@sha256:c58e2b364da03b0c804c7d660f2ecbedf2f221a382b9baa0b344b0144780ff43
     
     steps:
-      - name: Checkout repository
+      - name: Check out the review configuration
+        # The configuration comes from the base branch rather than the pull
+        # request, so that a pull request cannot change how it is reviewed.
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+          sparse-checkout: .opencode-review
           persist-credentials: false
 
       - name: Install Bun and OpenCode
@@ -90,6 +94,9 @@ jobs:
             FILE_INSTRUCTION="Only review files matching: $FILE_PATTERNS."
           fi
           
+          # OpenCode loads project configuration from its working directory, so
+          # run it somewhere the pull request does not control.
+          cd "$(mktemp -d)"
           opencode run --agent code-review \
             "Review PR #${PR_NUMBER} in ${REPO_OWNER}/${REPO_NAME}. \
              Analyze code changes, identify issues, and submit review with inline comments. \
