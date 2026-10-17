@@ -132,10 +132,12 @@ build_prompt() {
     local repo_owner="${REPO_OWNER:-}"
     local repo_name="${REPO_NAME:-}"
     
-    local prompt="Review"
+    # In Gitea Actions the tools find the pull request in the event payload, so
+    # these variables are only set when the review is run by hand.
+    local prompt="Review this pull request"
     
     if [ -n "$pr_num" ]; then
-        prompt="$prompt PR #$pr_num"
+        prompt="Review PR #$pr_num"
     fi
     
     if [ -n "$repo_owner" ] && [ -n "$repo_name" ]; then

@@ -229,9 +229,6 @@ Example:
 ### Submit Review Example
 ```json
 {
-  "owner": "<repo_owner>",
-  "repo": "<repo_name>",
-  "pull_number": 42,
   "summary": "## Code Review Report\n\n### 📋 Overview\nThis PR adds user authentication. Overall implementation is clean, but has 1 critical security issue and 1 medium performance issue.\n\n### 🔴 Critical Issues (CRITICAL)\n> Must fix before merge\n\n| Issue | File | Description |\n|:------|:-----|:------------|\n| Plaintext password storage | `src/auth.ts:25` | Password stored without hashing, severe security risk |\n\n### 🟠 High Priority (HIGH)\n> Should fix before merge\n\n| Issue | File | Description |\n|:------|:-----|:------------|\n| SQL injection risk | `src/db.ts:42` | String concatenation used to build SQL query, injection attack possible |\n\n### 🟡 Medium Priority (MEDIUM)\n> Recommended to fix\n\n| Issue | File | Description |\n|:------|:-----|:------------|\n| Database connection leak | `src/db.ts:58` | Connection not closed, may exhaust connection pool |\n\n### 💡 Suggestions\nFix all security issues before merge, especially password storage and SQL injection.",
   "comments": [
     {

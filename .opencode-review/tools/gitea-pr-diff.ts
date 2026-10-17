@@ -1,6 +1,7 @@
 /// <reference path="../env.d.ts" />
 import { tool } from "@opencode-ai/plugin"
 import DESCRIPTION from "./gitea-pr-diff.txt"
+import { giteaText, pullContext, pullPath } from "../lib/gitea"
 
 /**
  * Gitea/Forgejo PR Diff Tool
@@ -11,45 +12,6 @@ import DESCRIPTION from "./gitea-pr-diff.txt"
  *   GITEA_TOKEN - API token for Gitea/Forgejo
  *   GITEA_SERVER_URL - Base URL (e.g., https://gitea.example.com)
  */
-
-function normalizeBaseUrl(url: string): string {
-  return url.replace(/\/+$/, "").replace(/\/api\/v1\/?$/, "")
-}
-
-async function giteaFetch(endpoint: string, options: RequestInit = {}) {
-  const rawUrl = process.env.GITEA_SERVER_URL || process.env.GITHUB_SERVER_URL
-  const token = process.env.GITEA_TOKEN || process.env.GITHUB_TOKEN
-
-  if (!rawUrl) throw new Error("GITEA_SERVER_URL environment variable is required")
-  if (!token) throw new Error("GITEA_TOKEN environment variable is required")
-
-  const baseUrl = normalizeBaseUrl(rawUrl)
-  const url = `${baseUrl}/api/v1${endpoint}`
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: `token ${token}`,
-      ...options.headers,
-    },
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    if (response.status === 404) {
-      throw new Error(
-        `Gitea API error: 404 Not Found for ${url}\n` +
-        `Possible causes:\n` +
-        `  - GITEA_SERVER_URL is incorrect (current: ${rawUrl})\n` +
-        `  - Repository or PR does not exist\n` +
-        `  - Token does not have access to this resource\n` +
-        `Response: ${text}`
-      )
-    }
-    throw new Error(`Gitea API error: ${response.status} ${response.statusText} - ${text}`)
-  }
-
-  return response
-}
 
 interface ParsedChange {
   type: "add" | "del" | "normal"
@@ -217,9 +179,6 @@ function formatAsRawDiff(files: ParsedFile[]): string {
 export default tool({
   description: DESCRIPTION,
   args: {
-    owner: tool.schema.string().describe("Repository owner"),
-    repo: tool.schema.string().describe("Repository name"),
-    pull_number: tool.schema.number().describe("Pull request number"),
     format: tool.schema
       .enum(["raw", "parsed"])
       .optional()
@@ -231,12 +190,10 @@ export default tool({
       .describe("Optional glob patterns to filter files (e.g., ['*.ts', 'src/**/*.go']). Only matching files will be included in the diff."),
   },
   async execute(args) {
-    const { owner, repo, pull_number, format = "parsed", file_patterns } = args
+    const { format = "parsed", file_patterns } = args
+    const ctx = pullContext()
 
-    const response = await giteaFetch(`/repos/${owner}/${repo}/pulls/${pull_number}.diff`, {
-      headers: { Accept: "text/plain" },
-    })
-    const diffText = await response.text()
+    const diffText = await giteaText(`${pullPath(ctx)}.diff`)
 
     let parsed = parseDiff(diffText)
     
@@ -261,6 +218,6 @@ export default tool({
       ? `\n**Filter:** ${file_patterns.join(", ")}\n` 
       : ""
 
-    return `# PR #${pull_number} Diff\n${filterNote}\n**Files Changed:**\n${summary}\n\n---\n${formatted}`
+    return `# PR #${ctx.number} Diff\n${filterNote}\n**Files Changed:**\n${summary}\n\n---\n${formatted}`
   },
 })

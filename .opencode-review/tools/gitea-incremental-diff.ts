@@ -1,6 +1,7 @@
 /// <reference path="../env.d.ts" />
 import { tool } from "@opencode-ai/plugin"
 import DESCRIPTION from "./gitea-incremental-diff.txt"
+import { giteaJson, giteaText, pullContext, pullPath, repoPath } from "../lib/gitea"
 
 /**
  * Gitea/Forgejo Incremental PR Diff Tool
@@ -42,69 +43,6 @@ interface PRInfo {
     sha: string
   }
   merged: boolean
-}
-
-function normalizeBaseUrl(url: string): string {
-  return url.replace(/\/+$/, "").replace(/\/api\/v1\/?$/, "")
-}
-
-async function giteaFetch(endpoint: string, options: RequestInit = {}) {
-  const rawUrl = process.env.GITEA_SERVER_URL || process.env.GITHUB_SERVER_URL
-  const token = process.env.GITEA_TOKEN || process.env.GITHUB_TOKEN
-
-  if (!rawUrl) throw new Error("GITEA_SERVER_URL environment variable is required")
-  if (!token) throw new Error("GITEA_TOKEN environment variable is required")
-
-  const baseUrl = normalizeBaseUrl(rawUrl)
-  const url = `${baseUrl}/api/v1${endpoint}`
-  
-  // Build headers properly
-  const headers: Record<string, string> = {
-    Authorization: `token ${token}`,
-    Accept: "application/json",
-  }
-  
-  // Override Accept if provided in options
-  if (options.headers) {
-    const optHeaders = options.headers as Record<string, string>
-    if (optHeaders.Accept) {
-      headers.Accept = optHeaders.Accept
-    }
-  }
-  
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    if (response.status === 404) {
-      throw new Error(
-        `Gitea API error: 404 Not Found for ${url}\n` +
-        `Possible causes:\n` +
-        `  - GITEA_SERVER_URL is incorrect (current: ${rawUrl})\n` +
-        `  - Repository or PR does not exist\n` +
-        `  - Token does not have access to this resource\n` +
-        `Response: ${text}`
-      )
-    }
-    throw new Error(`Gitea API error: ${response.status} ${response.statusText} - ${text}`)
-  }
-
-  return response
-}
-
-async function giteaFetchJson<T>(endpoint: string): Promise<T> {
-  const response = await giteaFetch(endpoint)
-  return response.json() as Promise<T>
-}
-
-async function giteaFetchText(endpoint: string): Promise<string> {
-  const response = await giteaFetch(endpoint, {
-    headers: { Accept: "text/plain" },
-  })
-  return response.text()
 }
 
 // Identify bot reviews by checking for our review marker
@@ -255,9 +193,6 @@ function formatDiffForReview(files: ParsedFile[]): string {
 export default tool({
   description: DESCRIPTION,
   args: {
-    owner: tool.schema.string().describe("Repository owner"),
-    repo: tool.schema.string().describe("Repository name"),
-    pull_number: tool.schema.number().describe("Pull request number"),
     format: tool.schema
       .enum(["raw", "parsed"])
       .optional()
@@ -265,16 +200,17 @@ export default tool({
       .describe("Output format: 'raw' for unified diff, 'parsed' for line-numbered format"),
   },
   async execute(args) {
-    const { owner, repo, pull_number, format = "parsed" } = args
+    const { format = "parsed" } = args
+    const ctx = pullContext()
 
     // 1. Get PR info
-    const pr = await giteaFetchJson<PRInfo>(`/repos/${owner}/${repo}/pulls/${pull_number}`)
+    const pr = await giteaJson<PRInfo>(`${pullPath(ctx)}`)
     
     // 2. Get all commits in the PR
-    const commits = await giteaFetchJson<Commit[]>(`/repos/${owner}/${repo}/pulls/${pull_number}/commits`)
+    const commits = await giteaJson<Commit[]>(`${pullPath(ctx)}/commits`)
     
     // 3. Get all reviews
-    const reviews = await giteaFetchJson<Review[]>(`/repos/${owner}/${repo}/pulls/${pull_number}/reviews`)
+    const reviews = await giteaJson<Review[]>(`${pullPath(ctx)}/reviews`)
     
     // 4. Find last reviewed commit
     const lastReviewedCommit = findLastReviewedCommit(reviews, commits)
@@ -289,14 +225,14 @@ export default tool({
     if (!lastReviewedCommit) {
       // First review - get full diff
       statusMessage = "📋 **First Review** - Showing full PR diff\n"
-      diffText = await giteaFetchText(`/repos/${owner}/${repo}/pulls/${pull_number}.diff`)
+      diffText = await giteaText(`${pullPath(ctx)}.diff`)
     } else if (newCommits.length === 0) {
       // No new commits
       return `✅ **No New Changes**\n\nThe PR has not been updated since the last review (commit \`${lastReviewedCommit.slice(0, 7)}\`).\n\nNo review needed.`
     } else if (newCommits.length === commits.length) {
       // All commits are "new" - likely rebased
       statusMessage = `⚠️ **Rebase Detected** - PR appears to have been rebased.\n\nShowing full PR diff for complete re-review.\n\n`
-      diffText = await giteaFetchText(`/repos/${owner}/${repo}/pulls/${pull_number}.diff`)
+      diffText = await giteaText(`${pullPath(ctx)}.diff`)
     } else {
       // Incremental review
       const newCommitShas = newCommits.map(c => c.sha.slice(0, 7)).join(", ")
@@ -307,14 +243,14 @@ export default tool({
       
       // Try to get incremental diff using compare
       try {
-        diffText = await giteaFetchText(`/repos/${owner}/${repo}/compare/${lastReviewedCommit}...${pr.head.sha}.diff`)
+        diffText = await giteaText(`${repoPath(ctx)}/compare/${lastReviewedCommit}...${pr.head.sha}.diff`)
       } catch (error) {
         // Fallback: get individual commit diffs
         statusMessage += `> Note: Using individual commit diffs as fallback\n\n`
         const diffs: string[] = []
         for (const commit of newCommits) {
           try {
-            const commitDiff = await giteaFetchText(`/repos/${owner}/${repo}/git/commits/${commit.sha}.diff`)
+            const commitDiff = await giteaText(`${repoPath(ctx)}/git/commits/${commit.sha}.diff`)
             diffs.push(commitDiff)
           } catch {
             // Skip if commit diff not available
@@ -337,6 +273,6 @@ export default tool({
     const formatted = formatDiffForReview(parsed)
     const summary = parsed.map((f) => `- ${f.path} (${f.status})`).join("\n")
     
-    return `# PR #${pull_number} Incremental Diff\n\n${statusMessage}**Files Changed:**\n${summary}\n\n---\n${formatted}`
+    return `# PR #${ctx.number} Incremental Diff\n\n${statusMessage}**Files Changed:**\n${summary}\n\n---\n${formatted}`
   },
 })

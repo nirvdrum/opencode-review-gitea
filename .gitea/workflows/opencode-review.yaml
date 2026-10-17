@@ -52,10 +52,6 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # PR information
-          PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
-          REPO_OWNER: ${{ github.repository_owner }}
-          REPO_NAME: ${{ github.event.repository.name }}
           # Debug (optional)
           OPENCODE_LOG_LEVEL: info
         run: |
@@ -63,6 +59,6 @@ jobs:
           # run it somewhere the pull request does not control.
           cd "$(mktemp -d)"
           opencode run --agent code-review \
-            "Please review PR #${PR_NUMBER} in ${REPO_OWNER}/${REPO_NAME}. \
+            "Please review this pull request. \
              Fetch the diff, analyze the code changes, and submit a detailed review \
              with line-level comments for any issues found."

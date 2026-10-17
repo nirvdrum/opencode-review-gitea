@@ -57,11 +57,6 @@ jobs:
           
           # LLM Gateway (optional, for LiteLLM, OpenRouter, Together AI, etc.)
           # OPENAI_BASE_URL: ""          # e.g., http://localhost:4000/v1
-          
-          # PR context
-          PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
-          REPO_OWNER: ${{ github.repository_owner }}
-          REPO_NAME: ${{ github.event.repository.name }}
         run: |
           # The entrypoint handles everything automatically
           /entrypoint.sh review

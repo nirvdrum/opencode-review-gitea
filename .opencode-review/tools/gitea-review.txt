@@ -71,9 +71,6 @@ Severities: CRITICAL, HIGH, MEDIUM, LOW
 
 \`\`\`json
 {
-  "owner": "org",
-  "repo": "project", 
-  "pull_number": 42,
   "summary": "## Code Review Report\n\n### 📋 Overview\nThis PR adds user authentication. Overall implementation is clean, but has 1 critical security issue and 1 medium performance issue.\n\n### 🔴 Critical Issues (CRITICAL)\n> Must fix before merge\n\n| Issue | File | Description |\n|:------|:-----|:------------|\n| Plaintext password storage | `src/auth.ts:25` | Password stored without hashing, severe security risk |\n\n### 🟡 Medium Priority (MEDIUM)\n> Recommended to fix\n\n| Issue | File | Description |\n|:------|:-----|:------------|\n| Database connection leak | `src/db.ts:58` | Connection not closed, may exhaust connection pool |\n\n### 💡 Suggestions\nFix all security issues before merge, especially password storage.",
   "comments": [
     {
@@ -89,9 +86,6 @@ Severities: CRITICAL, HIGH, MEDIUM, LOW
 
 ## Parameters
 
-- owner: Repository owner (required)
-- repo: Repository name (required)
-- pull_number: PR number (required)
 - summary: Complete review report content (required) - AI generates this
 - comments: Array of line-level comments (optional)
 - approval: "comment" (default), "approve", or "request_changes"

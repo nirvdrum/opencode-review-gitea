@@ -73,11 +73,6 @@ jobs:
           # LLM Gateway (optional, for LiteLLM, OpenRouter, Together AI, etc.)
           # OPENAI_BASE_URL: ""          # e.g., http://localhost:4000/v1
           
-          # PR context
-          PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
-          REPO_OWNER: ${{ github.repository_owner }}
-          REPO_NAME: ${{ github.event.repository.name }}
-          
           # Logging
           OPENCODE_LOG_LEVEL: info
         run: |
@@ -98,6 +93,6 @@ jobs:
           # run it somewhere the pull request does not control.
           cd "$(mktemp -d)"
           opencode run --agent code-review \
-            "Review PR #${PR_NUMBER} in ${REPO_OWNER}/${REPO_NAME}. \
+            "Review this pull request. \
              Analyze code changes, identify issues, and submit review with inline comments. \
              ${LANG_INSTRUCTION} ${FILE_INSTRUCTION}"

@@ -1,6 +1,7 @@
 /// <reference path="../env.d.ts" />
 import { tool } from "@opencode-ai/plugin"
 import DESCRIPTION from "./gitea-review.txt"
+import { giteaJson, pullContext, pullPath } from "../lib/gitea"
 
 /**
  * Gitea/Forgejo Code Review Tool
@@ -23,58 +24,6 @@ interface ReviewRequest {
     new_position?: number
     old_position?: number
   }>
-}
-
-function normalizeBaseUrl(url: string): string {
-  return url.replace(/\/+$/, "").replace(/\/api\/v1\/?$/, "")
-}
-
-async function giteaFetch(endpoint: string, options: RequestInit = {}) {
-  const rawUrl = process.env.GITEA_SERVER_URL || process.env.GITHUB_SERVER_URL
-  const token = process.env.GITEA_TOKEN || process.env.GITHUB_TOKEN
-
-  if (!rawUrl) throw new Error("GITEA_SERVER_URL environment variable is required")
-  if (!token) throw new Error("GITEA_TOKEN environment variable is required")
-
-  const baseUrl = normalizeBaseUrl(rawUrl)
-  const url = `${baseUrl}/api/v1${endpoint}`
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: `token ${token}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    
-    if (response.status === 403 || text.includes("required scope")) {
-      throw new Error(
-        `Gitea API permission error: Your token lacks required permissions.\n` +
-        `Required: write:repository scope\n` +
-        `Please create a new token with write:repository permission in Gitea Settings → Applications → Access Tokens\n` +
-        `Original error: ${text}`
-      )
-    }
-
-    if (response.status === 404) {
-      throw new Error(
-        `Gitea API error: 404 Not Found for ${url}\n` +
-        `Possible causes:\n` +
-        `  - GITEA_SERVER_URL is incorrect (current: ${rawUrl})\n` +
-        `  - Repository or PR does not exist\n` +
-        `  - Token does not have access to this resource\n` +
-        `Response: ${text}`
-      )
-    }
-    
-    throw new Error(`Gitea API error: ${response.status} ${response.statusText} - ${text}`)
-  }
-
-  return response.json()
 }
 
 /**
@@ -149,9 +98,6 @@ ${suggestion}
 export default tool({
   description: DESCRIPTION,
   args: {
-    owner: tool.schema.string().describe("Repository owner"),
-    repo: tool.schema.string().describe("Repository name"),
-    pull_number: tool.schema.number().describe("Pull request number"),
     summary: tool.schema.string().describe("Review summary/report content. This is the main review body that will be displayed. AI should generate a complete, well-formatted summary including overview, key findings, file table, etc."),
     comments: tool.schema
       .array(
@@ -173,9 +119,6 @@ export default tool({
   },
   async execute(args) {
     const { 
-      owner, 
-      repo, 
-      pull_number, 
       summary, 
       comments = [], 
       approval = "comment",
@@ -190,7 +133,8 @@ export default tool({
     const event = eventMap[approval] || "COMMENT"
 
     // Get PR info for commit SHA
-    const pr = await giteaFetch(`/repos/${owner}/${repo}/pulls/${pull_number}`)
+    const ctx = pullContext()
+    const pr = await giteaJson<{ head?: { sha?: string } }>(pullPath(ctx))
     const commitId = pr.head?.sha
 
     // Process summary - convert escaped newlines to actual newlines
@@ -236,7 +180,7 @@ export default tool({
       comments: reviewComments.length > 0 ? reviewComments : undefined,
     }
 
-    await giteaFetch(`/repos/${owner}/${repo}/pulls/${pull_number}/reviews`, {
+    await giteaJson(`${pullPath(ctx)}/reviews`, {
       method: "POST",
       body: JSON.stringify(reviewPayload),
     })
