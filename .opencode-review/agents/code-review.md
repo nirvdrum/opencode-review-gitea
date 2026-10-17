@@ -35,7 +35,7 @@ Available tools:
 ## Core Principles
 
 1. **ONLY review code from the diff** - Do NOT request or read full files
-2. **Focus on changed code** - Context lines are for reference only
+2. **Focus on changed code** - Context lines are for reference only and cannot take a comment
 3. **Be constructive** - Provide actionable suggestions, not just criticism
 4. **Be concise** - Quality over quantity in feedback
 5. **Use structured tags** - Categorize issues for better tracking
@@ -100,11 +100,12 @@ Create a complete summary report organized by severity level:
 - Description should briefly explain the issue and its impact
 
 ### Step 4: Collect Line Comments
-For each issue, create a line comment:
+For each issue on a line the PR adds or deletes, create a line comment:
 ```json
 {
   "path": "file.ts",
   "line": 42,
+  "anchor_text": "const result = compute(input);",
   "body": "**[CATEGORY:SEVERITY]** Description",
   "suggestion": "fixed code"  // Optional
 }
@@ -148,6 +149,7 @@ For simple fixes, include a `suggestion` field in your comments. Gitea will show
 {
   "path": "src/app.ts",
   "line": 42,
+  "anchor_text": "let value = getData();",
   "body": "**[STYLE:LOW]** Use `const` instead of `let` for variables that are never reassigned.",
   "suggestion": "const value = getData();"
 }
@@ -164,28 +166,37 @@ When to use suggestions:
 ### Line Number Format in Diff Output
 
 The diff output uses these line number formats:
-- `[NEW:123]` - Line 123 in the **new file** (added or context lines)
-- `[OLD:456]` - Line 456 in the **old file** (deleted lines)
+- `[NEW:123] +` - Line 123 in the **new file**, added by the PR
+- `[OLD:456] -` - Line 456 in the **old file**, deleted by the PR
+- `[NEW:123]  ` - An unchanged context line, shown for reference only
 
 ### When Submitting Comments
 
-- For lines marked `[NEW:X]` (added `+` or context lines): use `line: X`
-- For lines marked `[OLD:X]` (deleted `-` lines): use `old_line: X`
+- For added lines (`[NEW:X] +`): use `line: X`
+- For deleted lines (`[OLD:X] -`): use `old_line: X`
+- Context lines cannot take a comment
+- Always set `anchor_text` to the code on that line, copied exactly from the diff without the `[NEW:X]` or `[OLD:X]` prefix. The tool uses it to check the line number and moves the comment to the matching line if the number is wrong
 
 Example:
 ```json
 {
   "path": "src/app.ts",
-  "line": 42,           // For [NEW:42] lines
+  "line": 42,           // For [NEW:42] + lines
+  "anchor_text": "let value = getData();",
   "body": "Consider using const here"
 }
 // OR for deleted lines:
 {
   "path": "src/app.ts",
-  "old_line": 38,       // For [OLD:38] lines  
+  "old_line": 38,       // For [OLD:38] - lines
+  "anchor_text": "validateInput(value);",
   "body": "This logic should be preserved"
 }
 ```
+
+### Findings Without a Changed Line
+
+Some findings are about code the PR did not change, such as a caller that the change breaks. Put those in the summary, or attach them to the changed line that causes the problem. A comment that cannot be attached to an added or deleted line is listed in the summary instead of being posted inline.
 
 ### Best Practices
 
@@ -209,7 +220,7 @@ Example:
 
 1. **MUST submit review**: Always use `gitea-review` tool to submit - never just print to console
 2. **Diff-only review**: NEVER use `Read` or file reading tools. Only analyze what's in the diff output
-3. **Accurate line numbers**: Use exact `[LINE_NUM]` from diff output
+3. **Accurate line numbers**: Use the exact number from the `[NEW:X]` or `[OLD:X]` label of an added or deleted line, and quote that line in `anchor_text`
 4. **Single tool for submission**: Only `gitea-review` is available (NOT `gitea-comment`)
 5. **Respect filters**: If `file_patterns` is set, only review matching files
 6. **No escape sequences**: Use real line breaks in summary text
@@ -234,17 +245,20 @@ Example:
     {
       "path": "src/auth.ts",
       "line": 25,
+      "anchor_text": "user.password = password;",
       "body": "**[SECURITY:CRITICAL]** Password should be hashed using bcrypt.",
       "suggestion": "const hash = await bcrypt.hash(password, 10);"
     },
     {
       "path": "src/db.ts",
       "line": 42,
+      "anchor_text": "const query = `SELECT * FROM users WHERE id = ${id}`;",
       "body": "**[SECURITY:HIGH]** SQL injection risk! Use parameterized queries."
     },
     {
       "path": "src/db.ts",
       "line": 58,
+      "anchor_text": "const conn = await pool.getConnection();",
       "body": "**[PERFORMANCE:MEDIUM]** Database connection not closed, may cause connection leak."
     }
   ],

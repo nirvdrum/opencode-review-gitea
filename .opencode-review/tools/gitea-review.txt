@@ -2,7 +2,7 @@ Submit a code review on a Gitea/Forgejo pull request.
 
 This tool submits a review with:
 1. A summary/report (AI-generated, displayed as the main review body)
-2. Line-level comments attached to specific code lines
+2. Line-level comments attached to lines the pull request adds or deletes
 3. An approval decision (approve/comment/request_changes)
 
 **IMPORTANT**: The `summary` parameter should contain a complete, well-formatted review report. 
@@ -67,6 +67,14 @@ Use structured tags for categorization:
 Categories: BUG, SECURITY, PERFORMANCE, STYLE, DOCS, TEST
 Severities: CRITICAL, HIGH, MEDIUM, LOW
 
+## Where Comments Can Go
+
+Inline comments can only be attached to lines the pull request adds (`[NEW:X] +`, use `line: X`) or deletes (`[OLD:X] -`, use `old_line: X`). Context lines cannot take a comment.
+
+Every comment must include `anchor_text`: the code on the line it is about, copied exactly from the diff without the `[NEW:X]` or `[OLD:X]` prefix. The tool checks the line number against it and moves the comment to the line that matches if the number is wrong.
+
+A finding about unchanged code, such as a caller that the change breaks, belongs in the summary, or on the changed line that causes it. A comment that cannot be attached to a changed line is listed in the summary instead of being posted inline.
+
 ## Example Usage
 
 \`\`\`json
@@ -76,6 +84,7 @@ Severities: CRITICAL, HIGH, MEDIUM, LOW
     {
       "path": "src/auth.ts",
       "line": 25,
+      "anchor_text": "user.password = password;",
       "body": "**[SECURITY:CRITICAL]** Password should be hashed using bcrypt.",
       "suggestion": "const hash = await bcrypt.hash(password, 10);"
     }
@@ -87,5 +96,5 @@ Severities: CRITICAL, HIGH, MEDIUM, LOW
 ## Parameters
 
 - summary: Complete review report content (required) - AI generates this
-- comments: Array of line-level comments (optional)
+- comments: Array of line-level comments (optional), each with path, line or old_line, anchor_text, body, and an optional suggestion
 - approval: "comment" (default), "approve", or "request_changes"
