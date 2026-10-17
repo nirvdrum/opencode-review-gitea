@@ -1,6 +1,10 @@
 /// <reference path="../env.d.ts" />
 import { tool } from "@opencode-ai/plugin"
 import DESCRIPTION from "./gitea-review.txt"
+import { giteaJson, pullContext, pullPath } from "../lib/gitea"
+import { pullSnapshot } from "../lib/snapshot"
+import { formatUnplacedComments, placeComments } from "../lib/placement"
+import { reviewConfigNotice } from "../lib/notices"
 
 /**
  * Gitea/Forgejo Code Review Tool
@@ -23,58 +27,6 @@ interface ReviewRequest {
     new_position?: number
     old_position?: number
   }>
-}
-
-function normalizeBaseUrl(url: string): string {
-  return url.replace(/\/+$/, "").replace(/\/api\/v1\/?$/, "")
-}
-
-async function giteaFetch(endpoint: string, options: RequestInit = {}) {
-  const rawUrl = process.env.GITEA_SERVER_URL || process.env.GITHUB_SERVER_URL
-  const token = process.env.GITEA_TOKEN || process.env.GITHUB_TOKEN
-
-  if (!rawUrl) throw new Error("GITEA_SERVER_URL environment variable is required")
-  if (!token) throw new Error("GITEA_TOKEN environment variable is required")
-
-  const baseUrl = normalizeBaseUrl(rawUrl)
-  const url = `${baseUrl}/api/v1${endpoint}`
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: `token ${token}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    
-    if (response.status === 403 || text.includes("required scope")) {
-      throw new Error(
-        `Gitea API permission error: Your token lacks required permissions.\n` +
-        `Required: write:repository scope\n` +
-        `Please create a new token with write:repository permission in Gitea Settings → Applications → Access Tokens\n` +
-        `Original error: ${text}`
-      )
-    }
-
-    if (response.status === 404) {
-      throw new Error(
-        `Gitea API error: 404 Not Found for ${url}\n` +
-        `Possible causes:\n` +
-        `  - GITEA_SERVER_URL is incorrect (current: ${rawUrl})\n` +
-        `  - Repository or PR does not exist\n` +
-        `  - Token does not have access to this resource\n` +
-        `Response: ${text}`
-      )
-    }
-    
-    throw new Error(`Gitea API error: ${response.status} ${response.statusText} - ${text}`)
-  }
-
-  return response.json()
 }
 
 /**
@@ -149,22 +101,20 @@ ${suggestion}
 export default tool({
   description: DESCRIPTION,
   args: {
-    owner: tool.schema.string().describe("Repository owner"),
-    repo: tool.schema.string().describe("Repository name"),
-    pull_number: tool.schema.number().describe("Pull request number"),
     summary: tool.schema.string().describe("Review summary/report content. This is the main review body that will be displayed. AI should generate a complete, well-formatted summary including overview, key findings, file table, etc."),
     comments: tool.schema
       .array(
         tool.schema.object({
           path: tool.schema.string().describe("File path"),
-          line: tool.schema.number().optional().describe("Line number in the NEW file (for added/context lines). Use this OR old_line, not both."),
-          old_line: tool.schema.number().optional().describe("Line number in the OLD file (for deleted lines). Use this OR line, not both."),
+          line: tool.schema.number().optional().describe("Line number in the NEW file of an added line ([NEW:X] +). Use this OR old_line, not both."),
+          old_line: tool.schema.number().optional().describe("Line number in the OLD file of a deleted line ([OLD:X] -). Use this OR line, not both."),
+          anchor_text: tool.schema.string().describe("The code on the line being commented on, copied exactly from the diff without the [NEW:X] or [OLD:X] prefix. Used to check the line number and to correct it if it is wrong."),
           body: tool.schema.string().describe("Comment content. Use structured tags like **[BUG:HIGH]** or **[SECURITY:CRITICAL]** for categorization."),
           suggestion: tool.schema.string().optional().describe("Optional: Suggested replacement code. Will create a one-click applicable suggestion block in Gitea."),
         }),
       )
       .optional()
-      .describe("Line-level review comments. Use 'line' for new/context lines, 'old_line' for deleted lines. Include 'suggestion' for auto-fix proposals."),
+      .describe("Line-level review comments, attached only to lines the pull request adds or deletes. Use 'line' for added lines, 'old_line' for deleted lines, and always include 'anchor_text'. Include 'suggestion' for auto-fix proposals. Comments that cannot be attached are listed in the summary instead."),
     approval: tool.schema
       .enum(["comment", "approve", "request_changes"])
       .optional()
@@ -173,9 +123,6 @@ export default tool({
   },
   async execute(args) {
     const { 
-      owner, 
-      repo, 
-      pull_number, 
       summary, 
       comments = [], 
       approval = "comment",
@@ -189,44 +136,40 @@ export default tool({
     }
     const event = eventMap[approval] || "COMMENT"
 
-    // Get PR info for commit SHA
-    const pr = await giteaFetch(`/repos/${owner}/${repo}/pulls/${pull_number}`)
-    const commitId = pr.head?.sha
+    // Post against the commit the diff was read from, not whatever the head is
+    // now. If the pull request moved on in the meantime, Gitea shows these
+    // comments as outdated rather than attaching them to the wrong lines.
+    const ctx = pullContext()
+    const { headSha: commitId, files } = await pullSnapshot(ctx)
 
-    // Process summary - convert escaped newlines to actual newlines
-    const processedSummary = summary
-      .replace(/\\n/g, "\n")
-      .replace(/\\t/g, "\t")
+    const unescape = (text: string) => text.replace(/\\n/g, "\n").replace(/\\t/g, "\t")
+
+    // Check every comment against the reviewed diff before posting, so that
+    // inline comments only land on lines this pull request changed. The prompt
+    // asks for that too, but nothing else enforces it.
+    const { placed, unplaced } = placeComments(files, comments.map((c) => ({
+      ...c,
+      body: unescape(c.body),
+      suggestion: c.suggestion === undefined ? undefined : unescape(c.suggestion),
+      anchor_text: unescape(c.anchor_text),
+    })))
+
+    const processedSummary = reviewConfigNotice(files) +
+      unescape(summary) +
+      formatUnplacedComments(unplaced) +
+      `\n\n<sub>Reviewed at commit ${commitId.slice(0, 7)}.</sub>`
 
     // Format review comments for API
-    const reviewComments = comments.map((c) => {
-      const processedBody = c.body.replace(/\\n/g, "\n").replace(/\\t/g, "\t")
-      const processedSuggestion = c.suggestion?.replace(/\\n/g, "\n").replace(/\\t/g, "\t")
-      const finalBody = formatCommentBody(processedBody, processedSuggestion)
-      
-      const comment: {
-        path: string
-        body: string
-        new_position?: number
-        old_position?: number
-      } = {
-        path: c.path,
-        body: finalBody,
-      }
-      
-      if (c.old_line !== undefined && c.old_line > 0) {
-        comment.old_position = c.old_line
-        comment.new_position = 0
-      } else if (c.line !== undefined && c.line > 0) {
-        comment.new_position = c.line
-        comment.old_position = 0
-      }
-      
-      return comment
-    })
+    const reviewComments = placed.map((c) => ({
+      path: c.path,
+      body: formatCommentBody(c.body, c.suggestion),
+      new_position: c.side === "new" ? c.line : 0,
+      old_position: c.side === "old" ? c.line : 0,
+    }))
 
     // Count suggestions
-    const suggestionCount = comments.filter(c => c.suggestion).length
+    const suggestionCount = placed.filter(c => c.suggestion).length
+    const movedCount = placed.filter(c => c.moved).length
 
     // Create the review
     const reviewPayload: ReviewRequest = {
@@ -236,12 +179,14 @@ export default tool({
       comments: reviewComments.length > 0 ? reviewComments : undefined,
     }
 
-    await giteaFetch(`/repos/${owner}/${repo}/pulls/${pull_number}/reviews`, {
+    await giteaJson(`${pullPath(ctx)}/reviews`, {
       method: "POST",
       body: JSON.stringify(reviewPayload),
     })
 
     const suggestionMsg = suggestionCount > 0 ? ` | 💡 ${suggestionCount} auto-fix` : ""
-    return `✅ Review submitted successfully!\n\n**Decision:** ${approval} | **Comments:** ${comments.length}${suggestionMsg}`
+    const placementMsg = (movedCount > 0 ? ` | ${movedCount} moved to the quoted line` : "") +
+      (unplaced.length > 0 ? ` | ${unplaced.length} listed in the summary instead` : "")
+    return `✅ Review submitted successfully!\n\n**Decision:** ${approval} | **Inline comments:** ${placed.length}${placementMsg}${suggestionMsg}`
   },
 })

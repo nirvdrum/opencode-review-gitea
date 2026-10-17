@@ -4,39 +4,38 @@
 # No additional files required - just this workflow file!
 #
 # Installation:
-#   curl -fsSL https://raw.githubusercontent.com/ccsert/opencode-review-gitea/main/install.sh | bash -s -- --docker
+#   Copy this file into .gitea/workflows/ from a checkout you have reviewed.
 
 name: OpenCode Review
 
 on:
   issue_comment:
     types: [created]
-  pull_request_review_comment:
-    types: [created]
   pull_request:
     types: [opened, synchronize]
 
 jobs:
   opencode-review:
-    # Trigger on /oc or /opencode command, or on new/updated PR
+    # Review every new or updated pull request. A comment can also ask for a
+    # review, but only on a pull request and only when the whole comment is the
+    # command, so that mentioning it in passing, or the reviewer quoting it in
+    # its own comments, does not start a run.
     if: |
       github.event_name == 'pull_request' ||
-      contains(github.event.comment.body, '/oc') ||
-      contains(github.event.comment.body, '/opencode')
+      (github.event.issue.pull_request &&
+        (github.event.comment.body == '/oc' || github.event.comment.body == '/opencode'))
     runs-on: ubuntu-latest
     
-    # Use pre-built Docker image with all dependencies
+    # Use an image built from this repository's Dockerfile, pinned by digest so
+    # that a re-pushed tag cannot change what runs with your secrets. Get the
+    # digest from `docker buildx imagetools inspect <image>:<tag>` after pushing.
     container:
-      image: ghcr.io/ccsert/opencode-review:latest
-      # Optional: pin to specific version for stability
-      # image: ghcr.io/ccsert/opencode-review:v1.0.0
+      image: <registry>/<owner>/opencode-review:<tag>@sha256:<digest>
     
+    # There is no checkout step. The diff comes from the Gitea API, and leaving
+    # the pull request's files out of the container keeps them from supplying
+    # their own review configuration.
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
       - name: Run code review
         env:
           # Gitea/Forgejo configuration
@@ -59,11 +58,6 @@ jobs:
           
           # LLM Gateway (optional, for LiteLLM, OpenRouter, Together AI, etc.)
           # OPENAI_BASE_URL: ""          # e.g., http://localhost:4000/v1
-          
-          # PR context
-          PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
-          REPO_OWNER: ${{ github.repository_owner }}
-          REPO_NAME: ${{ github.event.repository.name }}
         run: |
           # The entrypoint handles everything automatically
           /entrypoint.sh review

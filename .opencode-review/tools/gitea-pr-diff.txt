@@ -13,12 +13,13 @@ Output formats:
 The parsed format shows:
 - [NEW:42] +new line  - Added line at line 42 in new file (use `line: 42` in comments)
 - [OLD:38] -old line  - Deleted line at line 38 in old file (use `old_line: 38` in comments)
-- [NEW:42]  context   - Unchanged context line (use `line: 42` in comments)
+- [NEW:42]  context   - Unchanged context line, shown for reference only (cannot take a comment)
 
 File filtering examples:
 - ["*.ts", "*.tsx"] - Only TypeScript files
 - ["src/**"] - Only files in src directory
 
 When creating review comments with gitea-review tool:
-- For [NEW:X] lines → use `line: X`
-- For [OLD:X] lines → use `old_line: X`
+- For [NEW:X] + lines → use `line: X`
+- For [OLD:X] - lines → use `old_line: X`
+- Always set `anchor_text` to the code on that line, without the [NEW:X] or [OLD:X] prefix

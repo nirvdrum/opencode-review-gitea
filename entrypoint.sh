@@ -18,26 +18,16 @@ log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# Check for user-mounted custom config
+# Select the review configuration.
+#
+# The configuration is never taken from /workspace, because that is usually a
+# checkout of the pull request under review. A pull request that could supply
+# its own agents, tools, or permissions could rewrite its own review or run
+# code with the token and API keys. A custom configuration has to be chosen
+# explicitly by whoever writes the workflow, through OPENCODE_CONFIG_DIR.
 setup_config() {
-    # If user mounted custom config at /workspace/.opencode-review, use it
-    if [ -d "/workspace/.opencode-review" ]; then
-        log_info "Using custom config from /workspace/.opencode-review"
-        export OPENCODE_CONFIG_DIR="/workspace/.opencode-review"
-        
-        # Install dependencies if package.json exists
-        if [ -f "/workspace/.opencode-review/package.json" ]; then
-            log_info "Installing custom tool dependencies..."
-            # Use subshell to avoid directory stack issues
-            (
-                cd /workspace/.opencode-review || exit 1
-                bun install 2>/dev/null || echo "[WARN] Failed to install custom dependencies"
-            )
-        fi
-    else
-        log_info "Using built-in config from /app/.opencode-review"
-        export OPENCODE_CONFIG_DIR="/app/.opencode-review"
-    fi
+    export OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-/app/.opencode-review}"
+    log_info "Using config from $OPENCODE_CONFIG_DIR"
 }
 
 # Validate required environment variables
@@ -142,10 +132,12 @@ build_prompt() {
     local repo_owner="${REPO_OWNER:-}"
     local repo_name="${REPO_NAME:-}"
     
-    local prompt="Review"
+    # In Gitea Actions the tools find the pull request in the event payload, so
+    # these variables are only set when the review is run by hand.
+    local prompt="Review this pull request"
     
     if [ -n "$pr_num" ]; then
-        prompt="$prompt PR #$pr_num"
+        prompt="Review PR #$pr_num"
     fi
     
     if [ -n "$repo_owner" ] && [ -n "$repo_name" ]; then
@@ -247,6 +239,11 @@ main() {
             fi
             
             log_info "Running code review..."
+            # OpenCode also loads project configuration (opencode.json and
+            # .opencode/) from its working directory up to the git root. The
+            # review needs nothing from the checkout, because the diff comes
+            # from the API, so run it from an empty directory instead.
+            cd "$(mktemp -d)"
             exec opencode run --agent code-review "$prompt"
             ;;
             

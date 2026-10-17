@@ -1,6 +1,9 @@
 /// <reference path="../env.d.ts" />
 import { tool } from "@opencode-ai/plugin"
 import DESCRIPTION from "./gitea-incremental-diff.txt"
+import { giteaJson, giteaText, pullContext, pullPath, repoPath } from "../lib/gitea"
+import { pullSnapshot } from "../lib/snapshot"
+import { formatDiffForReview, parseDiff } from "../lib/diff"
 
 /**
  * Gitea/Forgejo Incremental PR Diff Tool
@@ -32,79 +35,6 @@ interface Review {
   commit_id: string
   submitted_at: string
   state: string
-}
-
-interface PRInfo {
-  head: {
-    sha: string
-  }
-  base: {
-    sha: string
-  }
-  merged: boolean
-}
-
-function normalizeBaseUrl(url: string): string {
-  return url.replace(/\/+$/, "").replace(/\/api\/v1\/?$/, "")
-}
-
-async function giteaFetch(endpoint: string, options: RequestInit = {}) {
-  const rawUrl = process.env.GITEA_SERVER_URL || process.env.GITHUB_SERVER_URL
-  const token = process.env.GITEA_TOKEN || process.env.GITHUB_TOKEN
-
-  if (!rawUrl) throw new Error("GITEA_SERVER_URL environment variable is required")
-  if (!token) throw new Error("GITEA_TOKEN environment variable is required")
-
-  const baseUrl = normalizeBaseUrl(rawUrl)
-  const url = `${baseUrl}/api/v1${endpoint}`
-  
-  // Build headers properly
-  const headers: Record<string, string> = {
-    Authorization: `token ${token}`,
-    Accept: "application/json",
-  }
-  
-  // Override Accept if provided in options
-  if (options.headers) {
-    const optHeaders = options.headers as Record<string, string>
-    if (optHeaders.Accept) {
-      headers.Accept = optHeaders.Accept
-    }
-  }
-  
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  })
-
-  if (!response.ok) {
-    const text = await response.text()
-    if (response.status === 404) {
-      throw new Error(
-        `Gitea API error: 404 Not Found for ${url}\n` +
-        `Possible causes:\n` +
-        `  - GITEA_SERVER_URL is incorrect (current: ${rawUrl})\n` +
-        `  - Repository or PR does not exist\n` +
-        `  - Token does not have access to this resource\n` +
-        `Response: ${text}`
-      )
-    }
-    throw new Error(`Gitea API error: ${response.status} ${response.statusText} - ${text}`)
-  }
-
-  return response
-}
-
-async function giteaFetchJson<T>(endpoint: string): Promise<T> {
-  const response = await giteaFetch(endpoint)
-  return response.json() as Promise<T>
-}
-
-async function giteaFetchText(endpoint: string): Promise<string> {
-  const response = await giteaFetch(endpoint, {
-    headers: { Accept: "text/plain" },
-  })
-  return response.text()
 }
 
 // Identify bot reviews by checking for our review marker
@@ -145,119 +75,9 @@ function findCommitsAfter(commits: Commit[], afterSha: string | null): Commit[] 
   return commits.slice(afterIndex + 1)
 }
 
-interface ParsedChange {
-  type: "add" | "del" | "normal"
-  content: string
-  oldLine?: number
-  newLine?: number
-}
-
-interface ParsedHunk {
-  oldStart: number
-  newStart: number
-  changes: ParsedChange[]
-}
-
-interface ParsedFile {
-  path: string
-  status: string
-  hunks: ParsedHunk[]
-}
-
-function parseDiff(diffText: string): ParsedFile[] {
-  const files: ParsedFile[] = []
-  const lines = diffText.split("\n")
-  let i = 0
-
-  while (i < lines.length) {
-    const line = lines[i]
-
-    if (line.startsWith("diff --git")) {
-      const pathMatch = line.match(/b\/(.+)$/)
-      const path = pathMatch ? pathMatch[1] : "unknown"
-
-      let status = "modified"
-      while (i < lines.length && !lines[i].startsWith("@@")) {
-        if (lines[i].startsWith("new file")) status = "added"
-        else if (lines[i].startsWith("deleted file")) status = "deleted"
-        else if (lines[i].startsWith("rename")) status = "renamed"
-        i++
-      }
-
-      const hunks: ParsedHunk[] = []
-
-      while (i < lines.length && !lines[i].startsWith("diff --git")) {
-        if (lines[i].startsWith("@@")) {
-          const hunkMatch = lines[i].match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
-          if (hunkMatch) {
-            const oldStart = parseInt(hunkMatch[1], 10)
-            const newStart = parseInt(hunkMatch[2], 10)
-            const changes: ParsedChange[] = []
-            let oldLine = oldStart
-            let newLine = newStart
-
-            i++
-            while (i < lines.length && !lines[i].startsWith("@@") && !lines[i].startsWith("diff --git")) {
-              const content = lines[i].slice(1)
-              if (lines[i].startsWith("+")) {
-                changes.push({ type: "add", content, newLine: newLine++ })
-              } else if (lines[i].startsWith("-")) {
-                changes.push({ type: "del", content, oldLine: oldLine++ })
-              } else if (lines[i].startsWith(" ")) {
-                changes.push({ type: "normal", content, oldLine: oldLine++, newLine: newLine++ })
-              }
-              i++
-            }
-
-            hunks.push({ oldStart, newStart, changes })
-          } else {
-            i++
-          }
-        } else {
-          i++
-        }
-      }
-
-      files.push({ path, status, hunks })
-    } else {
-      i++
-    }
-  }
-
-  return files
-}
-
-function formatDiffForReview(files: ParsedFile[]): string {
-  const parts: string[] = []
-
-  for (const file of files) {
-    parts.push(`\n## ${file.path} (${file.status})\n`)
-
-    for (const hunk of file.hunks) {
-      parts.push(`@@ starting at line ${hunk.newStart} (old: ${hunk.oldStart}) @@`)
-
-      for (const change of hunk.changes) {
-        if (change.type === "add") {
-          parts.push(`[NEW:${change.newLine}] +${change.content}`)
-        } else if (change.type === "del") {
-          parts.push(`[OLD:${change.oldLine}] -${change.content}`)
-        } else {
-          parts.push(`[NEW:${change.newLine}]  ${change.content}`)
-        }
-      }
-      parts.push("")
-    }
-  }
-
-  return parts.join("\n")
-}
-
 export default tool({
   description: DESCRIPTION,
   args: {
-    owner: tool.schema.string().describe("Repository owner"),
-    repo: tool.schema.string().describe("Repository name"),
-    pull_number: tool.schema.number().describe("Pull request number"),
     format: tool.schema
       .enum(["raw", "parsed"])
       .optional()
@@ -265,16 +85,21 @@ export default tool({
       .describe("Output format: 'raw' for unified diff, 'parsed' for line-numbered format"),
   },
   async execute(args) {
-    const { owner, repo, pull_number, format = "parsed" } = args
+    const { format = "parsed" } = args
+    const ctx = pullContext()
 
-    // 1. Get PR info
-    const pr = await giteaFetchJson<PRInfo>(`/repos/${owner}/${repo}/pulls/${pull_number}`)
+    // 1. Pin the head commit, so that the review is posted against the commit
+    //    this diff describes.
+    const snapshot = await pullSnapshot(ctx)
     
-    // 2. Get all commits in the PR
-    const commits = await giteaFetchJson<Commit[]>(`/repos/${owner}/${repo}/pulls/${pull_number}/commits`)
-    
+    // 2. Get all commits in the PR, up to the pinned head. Anything pushed after
+    //    the snapshot belongs to the next review.
+    const allCommits = await giteaJson<Commit[]>(`${pullPath(ctx)}/commits`)
+    const headIndex = allCommits.findIndex(c => c.sha === snapshot.headSha)
+    const commits = headIndex === -1 ? allCommits : allCommits.slice(0, headIndex + 1)
+
     // 3. Get all reviews
-    const reviews = await giteaFetchJson<Review[]>(`/repos/${owner}/${repo}/pulls/${pull_number}/reviews`)
+    const reviews = await giteaJson<Review[]>(`${pullPath(ctx)}/reviews`)
     
     // 4. Find last reviewed commit
     const lastReviewedCommit = findLastReviewedCommit(reviews, commits)
@@ -289,32 +114,32 @@ export default tool({
     if (!lastReviewedCommit) {
       // First review - get full diff
       statusMessage = "📋 **First Review** - Showing full PR diff\n"
-      diffText = await giteaFetchText(`/repos/${owner}/${repo}/pulls/${pull_number}.diff`)
+      diffText = snapshot.diffText
     } else if (newCommits.length === 0) {
       // No new commits
       return `✅ **No New Changes**\n\nThe PR has not been updated since the last review (commit \`${lastReviewedCommit.slice(0, 7)}\`).\n\nNo review needed.`
     } else if (newCommits.length === commits.length) {
       // All commits are "new" - likely rebased
       statusMessage = `⚠️ **Rebase Detected** - PR appears to have been rebased.\n\nShowing full PR diff for complete re-review.\n\n`
-      diffText = await giteaFetchText(`/repos/${owner}/${repo}/pulls/${pull_number}.diff`)
+      diffText = snapshot.diffText
     } else {
       // Incremental review
       const newCommitShas = newCommits.map(c => c.sha.slice(0, 7)).join(", ")
       statusMessage = `🔄 **Incremental Review**\n\n` +
         `- Last reviewed: \`${lastReviewedCommit.slice(0, 7)}\`\n` +
         `- New commits (${newCommits.length}): ${newCommitShas}\n` +
-        `- Current HEAD: \`${pr.head.sha.slice(0, 7)}\`\n\n`
+        `- Current HEAD: \`${snapshot.headSha.slice(0, 7)}\`\n\n`
       
       // Try to get incremental diff using compare
       try {
-        diffText = await giteaFetchText(`/repos/${owner}/${repo}/compare/${lastReviewedCommit}...${pr.head.sha}.diff`)
+        diffText = await giteaText(`${repoPath(ctx)}/compare/${lastReviewedCommit}...${snapshot.headSha}.diff`)
       } catch (error) {
         // Fallback: get individual commit diffs
         statusMessage += `> Note: Using individual commit diffs as fallback\n\n`
         const diffs: string[] = []
         for (const commit of newCommits) {
           try {
-            const commitDiff = await giteaFetchText(`/repos/${owner}/${repo}/git/commits/${commit.sha}.diff`)
+            const commitDiff = await giteaText(`${repoPath(ctx)}/git/commits/${commit.sha}.diff`)
             diffs.push(commitDiff)
           } catch {
             // Skip if commit diff not available
@@ -337,6 +162,6 @@ export default tool({
     const formatted = formatDiffForReview(parsed)
     const summary = parsed.map((f) => `- ${f.path} (${f.status})`).join("\n")
     
-    return `# PR #${pull_number} Incremental Diff\n\n${statusMessage}**Files Changed:**\n${summary}\n\n---\n${formatted}`
+    return `# PR #${ctx.number} Incremental Diff\n\n${statusMessage}**Files Changed:**\n${summary}\n\n---\n${formatted}`
   },
 })
