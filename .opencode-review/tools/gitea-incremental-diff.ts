@@ -2,6 +2,8 @@
 import { tool } from "@opencode-ai/plugin"
 import DESCRIPTION from "./gitea-incremental-diff.txt"
 import { giteaJson, giteaText, pullContext, pullPath, repoPath } from "../lib/gitea"
+import { pullSnapshot } from "../lib/snapshot"
+import { formatDiffForReview, parseDiff } from "../lib/diff"
 
 /**
  * Gitea/Forgejo Incremental PR Diff Tool
@@ -33,16 +35,6 @@ interface Review {
   commit_id: string
   submitted_at: string
   state: string
-}
-
-interface PRInfo {
-  head: {
-    sha: string
-  }
-  base: {
-    sha: string
-  }
-  merged: boolean
 }
 
 // Identify bot reviews by checking for our review marker
@@ -83,113 +75,6 @@ function findCommitsAfter(commits: Commit[], afterSha: string | null): Commit[] 
   return commits.slice(afterIndex + 1)
 }
 
-interface ParsedChange {
-  type: "add" | "del" | "normal"
-  content: string
-  oldLine?: number
-  newLine?: number
-}
-
-interface ParsedHunk {
-  oldStart: number
-  newStart: number
-  changes: ParsedChange[]
-}
-
-interface ParsedFile {
-  path: string
-  status: string
-  hunks: ParsedHunk[]
-}
-
-function parseDiff(diffText: string): ParsedFile[] {
-  const files: ParsedFile[] = []
-  const lines = diffText.split("\n")
-  let i = 0
-
-  while (i < lines.length) {
-    const line = lines[i]
-
-    if (line.startsWith("diff --git")) {
-      const pathMatch = line.match(/b\/(.+)$/)
-      const path = pathMatch ? pathMatch[1] : "unknown"
-
-      let status = "modified"
-      while (i < lines.length && !lines[i].startsWith("@@")) {
-        if (lines[i].startsWith("new file")) status = "added"
-        else if (lines[i].startsWith("deleted file")) status = "deleted"
-        else if (lines[i].startsWith("rename")) status = "renamed"
-        i++
-      }
-
-      const hunks: ParsedHunk[] = []
-
-      while (i < lines.length && !lines[i].startsWith("diff --git")) {
-        if (lines[i].startsWith("@@")) {
-          const hunkMatch = lines[i].match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
-          if (hunkMatch) {
-            const oldStart = parseInt(hunkMatch[1], 10)
-            const newStart = parseInt(hunkMatch[2], 10)
-            const changes: ParsedChange[] = []
-            let oldLine = oldStart
-            let newLine = newStart
-
-            i++
-            while (i < lines.length && !lines[i].startsWith("@@") && !lines[i].startsWith("diff --git")) {
-              const content = lines[i].slice(1)
-              if (lines[i].startsWith("+")) {
-                changes.push({ type: "add", content, newLine: newLine++ })
-              } else if (lines[i].startsWith("-")) {
-                changes.push({ type: "del", content, oldLine: oldLine++ })
-              } else if (lines[i].startsWith(" ")) {
-                changes.push({ type: "normal", content, oldLine: oldLine++, newLine: newLine++ })
-              }
-              i++
-            }
-
-            hunks.push({ oldStart, newStart, changes })
-          } else {
-            i++
-          }
-        } else {
-          i++
-        }
-      }
-
-      files.push({ path, status, hunks })
-    } else {
-      i++
-    }
-  }
-
-  return files
-}
-
-function formatDiffForReview(files: ParsedFile[]): string {
-  const parts: string[] = []
-
-  for (const file of files) {
-    parts.push(`\n## ${file.path} (${file.status})\n`)
-
-    for (const hunk of file.hunks) {
-      parts.push(`@@ starting at line ${hunk.newStart} (old: ${hunk.oldStart}) @@`)
-
-      for (const change of hunk.changes) {
-        if (change.type === "add") {
-          parts.push(`[NEW:${change.newLine}] +${change.content}`)
-        } else if (change.type === "del") {
-          parts.push(`[OLD:${change.oldLine}] -${change.content}`)
-        } else {
-          parts.push(`[NEW:${change.newLine}]  ${change.content}`)
-        }
-      }
-      parts.push("")
-    }
-  }
-
-  return parts.join("\n")
-}
-
 export default tool({
   description: DESCRIPTION,
   args: {
@@ -203,12 +88,16 @@ export default tool({
     const { format = "parsed" } = args
     const ctx = pullContext()
 
-    // 1. Get PR info
-    const pr = await giteaJson<PRInfo>(`${pullPath(ctx)}`)
+    // 1. Pin the head commit, so that the review is posted against the commit
+    //    this diff describes.
+    const snapshot = await pullSnapshot(ctx)
     
-    // 2. Get all commits in the PR
-    const commits = await giteaJson<Commit[]>(`${pullPath(ctx)}/commits`)
-    
+    // 2. Get all commits in the PR, up to the pinned head. Anything pushed after
+    //    the snapshot belongs to the next review.
+    const allCommits = await giteaJson<Commit[]>(`${pullPath(ctx)}/commits`)
+    const headIndex = allCommits.findIndex(c => c.sha === snapshot.headSha)
+    const commits = headIndex === -1 ? allCommits : allCommits.slice(0, headIndex + 1)
+
     // 3. Get all reviews
     const reviews = await giteaJson<Review[]>(`${pullPath(ctx)}/reviews`)
     
@@ -225,25 +114,25 @@ export default tool({
     if (!lastReviewedCommit) {
       // First review - get full diff
       statusMessage = "📋 **First Review** - Showing full PR diff\n"
-      diffText = await giteaText(`${pullPath(ctx)}.diff`)
+      diffText = snapshot.diffText
     } else if (newCommits.length === 0) {
       // No new commits
       return `✅ **No New Changes**\n\nThe PR has not been updated since the last review (commit \`${lastReviewedCommit.slice(0, 7)}\`).\n\nNo review needed.`
     } else if (newCommits.length === commits.length) {
       // All commits are "new" - likely rebased
       statusMessage = `⚠️ **Rebase Detected** - PR appears to have been rebased.\n\nShowing full PR diff for complete re-review.\n\n`
-      diffText = await giteaText(`${pullPath(ctx)}.diff`)
+      diffText = snapshot.diffText
     } else {
       // Incremental review
       const newCommitShas = newCommits.map(c => c.sha.slice(0, 7)).join(", ")
       statusMessage = `🔄 **Incremental Review**\n\n` +
         `- Last reviewed: \`${lastReviewedCommit.slice(0, 7)}\`\n` +
         `- New commits (${newCommits.length}): ${newCommitShas}\n` +
-        `- Current HEAD: \`${pr.head.sha.slice(0, 7)}\`\n\n`
+        `- Current HEAD: \`${snapshot.headSha.slice(0, 7)}\`\n\n`
       
       // Try to get incremental diff using compare
       try {
-        diffText = await giteaText(`${repoPath(ctx)}/compare/${lastReviewedCommit}...${pr.head.sha}.diff`)
+        diffText = await giteaText(`${repoPath(ctx)}/compare/${lastReviewedCommit}...${snapshot.headSha}.diff`)
       } catch (error) {
         // Fallback: get individual commit diffs
         statusMessage += `> Note: Using individual commit diffs as fallback\n\n`

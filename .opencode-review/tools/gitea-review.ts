@@ -2,6 +2,7 @@
 import { tool } from "@opencode-ai/plugin"
 import DESCRIPTION from "./gitea-review.txt"
 import { giteaJson, pullContext, pullPath } from "../lib/gitea"
+import { pullSnapshot } from "../lib/snapshot"
 
 /**
  * Gitea/Forgejo Code Review Tool
@@ -132,15 +133,17 @@ export default tool({
     }
     const event = eventMap[approval] || "COMMENT"
 
-    // Get PR info for commit SHA
+    // Post against the commit the diff was read from, not whatever the head is
+    // now. If the pull request moved on in the meantime, Gitea shows these
+    // comments as outdated rather than attaching them to the wrong lines.
     const ctx = pullContext()
-    const pr = await giteaJson<{ head?: { sha?: string } }>(pullPath(ctx))
-    const commitId = pr.head?.sha
+    const { headSha: commitId } = await pullSnapshot(ctx)
 
     // Process summary - convert escaped newlines to actual newlines
     const processedSummary = summary
       .replace(/\\n/g, "\n")
-      .replace(/\\t/g, "\t")
+      .replace(/\\t/g, "\t") +
+      `\n\n<sub>Reviewed at commit ${commitId.slice(0, 7)}.</sub>`
 
     // Format review comments for API
     const reviewComments = comments.map((c) => {
