@@ -4,7 +4,13 @@
 # Build: docker build -t ghcr.io/ccsert/opencode-review:latest .
 # Run:   docker run --rm -v $(pwd):/workspace -e GITEA_TOKEN=xxx ghcr.io/ccsert/opencode-review
 
-FROM oven/bun:1
+# The base image is pinned by digest so that a rebuild cannot silently pick up a
+# different Bun or Debian. Update the tag and digest together.
+FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895
+
+# opencode-ai pins its platform binaries to its own version, so an exact version
+# here locks the whole runtime.
+ARG OPENCODE_VERSION=1.18.34
 
 LABEL org.opencontainers.image.source="https://github.com/ccsert/opencode-review-gitea"
 LABEL org.opencontainers.image.description="AI-powered code review for Gitea/Forgejo PRs"
@@ -25,7 +31,7 @@ RUN ARCH=$(uname -m) && \
     fi
 
 # Install opencode CLI globally
-RUN bun add -g opencode-ai
+RUN bun add -g opencode-ai@${OPENCODE_VERSION}
 
 # Create app directory for built-in config
 WORKDIR /app
@@ -35,7 +41,7 @@ COPY .opencode-review/ /app/.opencode-review/
 
 # Install tool dependencies
 WORKDIR /app/.opencode-review
-RUN bun install --frozen-lockfile || bun install
+RUN bun install --frozen-lockfile
 
 # Set working directory for user code
 WORKDIR /workspace

@@ -4,7 +4,7 @@
 # No additional files required - just this workflow file!
 #
 # Installation:
-#   curl -fsSL https://raw.githubusercontent.com/ccsert/opencode-review-gitea/main/install.sh | bash -s -- --docker
+#   Copy this file into .gitea/workflows/ from a checkout you have reviewed.
 
 name: OpenCode Review
 
@@ -25,15 +25,15 @@ jobs:
       contains(github.event.comment.body, '/opencode')
     runs-on: ubuntu-latest
     
-    # Use pre-built Docker image with all dependencies
+    # Use an image built from this repository's Dockerfile, pinned by digest so
+    # that a re-pushed tag cannot change what runs with your secrets. Get the
+    # digest from `docker buildx imagetools inspect <image>:<tag>` after pushing.
     container:
-      image: ghcr.io/ccsert/opencode-review:latest
-      # Optional: pin to specific version for stability
-      # image: ghcr.io/ccsert/opencode-review:v1.0.0
+      image: <registry>/<owner>/opencode-review:<tag>@sha256:<digest>
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 

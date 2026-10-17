@@ -6,7 +6,7 @@
 #   - .gitea/workflows/opencode-review.yaml (this file)
 #
 # Installation:
-#   curl -fsSL https://raw.githubusercontent.com/ccsert/opencode-review-gitea/main/install.sh | bash -s -- --source
+#   Copy this file into .gitea/workflows/ from a checkout you have reviewed.
 
 name: OpenCode Review
 
@@ -26,25 +26,22 @@ jobs:
       contains(github.event.comment.body, '/oc') ||
       contains(github.event.comment.body, '/opencode')
     runs-on: ubuntu-latest
-    container: catthehacker/ubuntu:act-latest
+    container: catthehacker/ubuntu:act-latest@sha256:c58e2b364da03b0c804c7d660f2ecbedf2f221a382b9baa0b344b0144780ff43
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
-      - name: Install Bun
-        run: |
-          curl -fsSL https://bun.sh/install | bash
-          echo "$HOME/.bun/bin" >> $GITHUB_PATH
+      - name: Install Bun and OpenCode
+        # Both packages pin their platform binaries to their own version, so exact
+        # versions here lock the whole toolchain.
+        run: npm install -g bun@1.4.2 opencode-ai@1.18.34
 
       - name: Install dependencies
         working-directory: .opencode-review
-        run: ~/.bun/bin/bun install
-
-      - name: Install OpenCode CLI
-        run: ~/.bun/bin/bun add -g opencode-ai
+        run: bun install --frozen-lockfile
 
       - name: Run code review
         env:
