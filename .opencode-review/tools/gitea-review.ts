@@ -4,6 +4,7 @@ import DESCRIPTION from "./gitea-review.txt"
 import { giteaJson, pullContext, pullPath } from "../lib/gitea"
 import { pullSnapshot } from "../lib/snapshot"
 import { formatUnplacedComments, placeComments } from "../lib/placement"
+import { reviewConfigNotice } from "../lib/notices"
 
 /**
  * Gitea/Forgejo Code Review Tool
@@ -153,7 +154,8 @@ export default tool({
       anchor_text: unescape(c.anchor_text),
     })))
 
-    const processedSummary = unescape(summary) +
+    const processedSummary = reviewConfigNotice(files) +
+      unescape(summary) +
       formatUnplacedComments(unplaced) +
       `\n\n<sub>Reviewed at commit ${commitId.slice(0, 7)}.</sub>`
 
