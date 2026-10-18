@@ -3,8 +3,9 @@
  *
  * Usage: bun run-review.ts <prompt>
  *
- * A pull request in a repository the token's account cannot read is not
- * reviewed, and the run passes without starting the model (see lib/access.ts).
+ * A pull request in a repository whose collaborators do not include the
+ * token's account is not reviewed, and the run passes without starting the
+ * model (see lib/access.ts).
  *
  * OpenCode exits successfully whenever the model stops, so a run in which every
  * Gitea call failed and nothing was posted would otherwise pass. The tools

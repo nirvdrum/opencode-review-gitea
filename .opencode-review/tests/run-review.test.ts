@@ -25,8 +25,8 @@ beforeEach(() => {
     fetch(request) {
       const path = new URL(request.url).pathname
       if (path === "/api/v1/version") return Response.json({ version: "1.26.0" })
-      if (!shared) return new Response("not found", { status: 404 })
-      if (path === "/api/v1/repos/kevin/taskerator/pulls/42") return Response.json({ number: 42 })
+      if (path === "/api/v1/user") return Response.json({ login: "codereview-bot" })
+      if (shared && path === "/api/v1/repos/kevin/taskerator/collaborators/codereview-bot") return new Response(null, { status: 204 })
       return new Response("not found", { status: 404 })
     },
   })
