@@ -20,6 +20,7 @@ This fork of [ccsert/opencode-review-gitea](https://github.com/ccsert/opencode-r
 - **Correct paths** for files in directories such as `lib/` and `db/`, which the diff parser used to garble.
 - **Exact comment trigger**, and a notice on every review of a pull request that changes CI or review configuration.
 - **A run that posts nothing fails.** OpenCode exits successfully whenever the model stops, even after every Gitea call failed. The tools record what they accomplished, and the job fails unless a review was posted or the pull request had nothing new to review.
+- **Reviews only repositories shared with the reviewer.** Before starting the model, the run checks that the token's account can read the pull request. If the repository is not shared with it, the run says so and passes without contacting the model, so one workflow can serve many repositories, such as through a Gitea scoped workflow, and the reviewer's collaborator access decides which are reviewed. A wrong server URL or a rejected token fails the run instead.
 
 ## ✨ Features
 

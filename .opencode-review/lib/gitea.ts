@@ -117,16 +117,20 @@ function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, "").replace(/\/api\/v1\/?$/, "")
 }
 
-export async function giteaFetch(endpoint: string, options: RequestInit = {}): Promise<Response> {
+function apiUrl(endpoint: string): string {
   const rawUrl = process.env.GITEA_SERVER_URL || process.env.GITHUB_SERVER_URL
-  const token = process.env.GITEA_TOKEN || process.env.GITHUB_TOKEN
-
   if (!rawUrl) throw new Error("GITEA_SERVER_URL environment variable is required")
+
+  return `${normalizeBaseUrl(rawUrl)}/api/v1${endpoint}`
+}
+
+/** Make an API request and return the response whatever its status. */
+export async function giteaRequest(endpoint: string, options: RequestInit = {}): Promise<Response> {
+  const url = apiUrl(endpoint)
+  const token = process.env.GITEA_TOKEN || process.env.GITHUB_TOKEN
   if (!token) throw new Error("GITEA_TOKEN environment variable is required")
 
-  const baseUrl = normalizeBaseUrl(rawUrl)
-  const url = `${baseUrl}/api/v1${endpoint}`
-  const response = await fetch(url, {
+  return fetch(url, {
     ...options,
     headers: {
       Authorization: `token ${token}`,
@@ -135,6 +139,12 @@ export async function giteaFetch(endpoint: string, options: RequestInit = {}): P
       ...options.headers,
     },
   })
+}
+
+export async function giteaFetch(endpoint: string, options: RequestInit = {}): Promise<Response> {
+  const rawUrl = process.env.GITEA_SERVER_URL || process.env.GITHUB_SERVER_URL
+  const url = apiUrl(endpoint)
+  const response = await giteaRequest(endpoint, options)
 
   if (!response.ok) {
     const text = await response.text()
