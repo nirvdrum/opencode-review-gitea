@@ -19,6 +19,9 @@ This fork of [ccsert/opencode-review-gitea](https://github.com/ccsert/opencode-r
 - **Comments only on changed lines.** Each comment quotes the code it is about and is checked against the diff before posting. Comments are moved to the line their quote is on, and those that match no changed line are listed in the summary instead.
 - **Correct paths** for files in directories such as `lib/` and `db/`, which the diff parser used to garble.
 - **Exact comment trigger**, and a notice on every review of a pull request that changes CI or review configuration.
+- **A run that posts nothing fails.** OpenCode exits successfully whenever the model stops, even after every Gitea call failed. The tools record what they accomplished, and the job fails unless a review was posted or the pull request had nothing new to review.
+- **Reviews only repositories shared with the reviewer.** Before starting the model, the run checks that the token's account can read the pull request. If the repository is not shared with it, the run says so and passes without contacting the model, so one workflow can serve many repositories, such as through a Gitea scoped workflow, and the reviewer's collaborator access decides which are reviewed. A wrong server URL or a rejected token fails the run instead.
+- **Context beyond the diff.** The reviewer can read whole files from the pull request at the reviewed commit, so it can check code outside the diff instead of asking the author to confirm it. Its comments are still limited to changed lines.
 
 ## ✨ Features
 
@@ -186,7 +189,7 @@ export OPENCODE_CONFIG_DIR="$(pwd)/.opencode-review"
 export REPO_OWNER="owner" REPO_NAME="repo" PR_NUMBER=123
 
 # Run from an empty directory so OpenCode loads no project configuration.
-(cd "$(mktemp -d)" && opencode run --agent code-review "Please review PR #123 in owner/repo")
+(cd "$(mktemp -d)" && bun "$OPENCODE_CONFIG_DIR/bin/run-review.ts" "Please review PR #123 in owner/repo")
 ```
 
 ## 🔧 Customization (Source Installation)
@@ -245,6 +248,7 @@ export default tool({
     ├── tools/
     │   ├── gitea-pr-diff.ts        # Get full PR diff
     │   ├── gitea-pr-files.ts       # List changed files
+    │   ├── gitea-pr-file.ts        # Read a file at the reviewed commit
     │   ├── gitea-incremental-diff.ts # Get incremental diff (new changes only)
     │   ├── gitea-review.ts         # Submit review with comments
     │   └── gitea-comment.ts        # Post comments on issues/PRs

@@ -4,6 +4,7 @@ import DESCRIPTION from "./gitea-incremental-diff.txt"
 import { giteaJson, giteaText, pullContext, pullPath, repoPath } from "../lib/gitea"
 import { pullSnapshot } from "../lib/snapshot"
 import { formatDiffForReview, parseDiff } from "../lib/diff"
+import { recordOutcome } from "../lib/outcome"
 
 /**
  * Gitea/Forgejo Incremental PR Diff Tool
@@ -117,6 +118,7 @@ export default tool({
       diffText = snapshot.diffText
     } else if (newCommits.length === 0) {
       // No new commits
+      recordOutcome("up-to-date")
       return `✅ **No New Changes**\n\nThe PR has not been updated since the last review (commit \`${lastReviewedCommit.slice(0, 7)}\`).\n\nNo review needed.`
     } else if (newCommits.length === commits.length) {
       // All commits are "new" - likely rebased

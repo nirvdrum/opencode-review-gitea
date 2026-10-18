@@ -244,7 +244,7 @@ main() {
             # review needs nothing from the checkout, because the diff comes
             # from the API, so run it from an empty directory instead.
             cd "$(mktemp -d)"
-            exec opencode run --agent code-review "$prompt"
+            exec bun /app/.opencode-review/bin/run-review.ts "$prompt"
             ;;
             
         shell|bash|sh)

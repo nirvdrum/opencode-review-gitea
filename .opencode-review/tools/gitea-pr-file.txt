@@ -1,0 +1,11 @@
+Read a file from the pull request under review, as it is at the reviewed commit.
+
+The diff shows only a few lines around each change. Use this tool when a finding depends on code outside them, such as a definition, a caller, or the condition around a changed block, and check that code yourself instead of asking the author to confirm it.
+
+Arguments:
+- path: the file's path in the repository, such as app/models/user.rb
+- start_line, end_line: optional, to read part of a long file
+
+Each line is shown as `42 | code`. These numbers are for reading only. Review comments can still only go on lines the pull request adds or deletes, using the [NEW:X] and [OLD:X] numbers from the diff.
+
+At most 1000 lines are returned per call. A file the pull request deletes does not exist at the reviewed commit, so read it from the diff instead.
