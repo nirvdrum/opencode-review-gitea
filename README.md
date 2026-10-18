@@ -19,6 +19,7 @@ This fork of [ccsert/opencode-review-gitea](https://github.com/ccsert/opencode-r
 - **Comments only on changed lines.** Each comment quotes the code it is about and is checked against the diff before posting. Comments are moved to the line their quote is on, and those that match no changed line are listed in the summary instead.
 - **Correct paths** for files in directories such as `lib/` and `db/`, which the diff parser used to garble.
 - **Exact comment trigger**, and a notice on every review of a pull request that changes CI or review configuration.
+- **A run that posts nothing fails.** OpenCode exits successfully whenever the model stops, even after every Gitea call failed. The tools record what they accomplished, and the job fails unless a review was posted or the pull request had nothing new to review.
 
 ## ✨ Features
 
@@ -186,7 +187,7 @@ export OPENCODE_CONFIG_DIR="$(pwd)/.opencode-review"
 export REPO_OWNER="owner" REPO_NAME="repo" PR_NUMBER=123
 
 # Run from an empty directory so OpenCode loads no project configuration.
-(cd "$(mktemp -d)" && opencode run --agent code-review "Please review PR #123 in owner/repo")
+(cd "$(mktemp -d)" && bun "$OPENCODE_CONFIG_DIR/bin/run-review.ts" "Please review PR #123 in owner/repo")
 ```
 
 ## 🔧 Customization (Source Installation)

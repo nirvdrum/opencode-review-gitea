@@ -5,6 +5,7 @@ import { giteaJson, pullContext, pullPath } from "../lib/gitea"
 import { pullSnapshot } from "../lib/snapshot"
 import { formatUnplacedComments, placeComments } from "../lib/placement"
 import { reviewConfigNotice } from "../lib/notices"
+import { recordOutcome } from "../lib/outcome"
 
 /**
  * Gitea/Forgejo Code Review Tool
@@ -183,6 +184,7 @@ export default tool({
       method: "POST",
       body: JSON.stringify(reviewPayload),
     })
+    recordOutcome("posted")
 
     const suggestionMsg = suggestionCount > 0 ? ` | 💡 ${suggestionCount} auto-fix` : ""
     const placementMsg = (movedCount > 0 ? ` | ${movedCount} moved to the quoted line` : "") +
